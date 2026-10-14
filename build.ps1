@@ -14,6 +14,7 @@ New-Item -ItemType Directory -Force $out | Out-Null
     /out:"$out\VideoSync.exe" `
     /r:"$wpf\PresentationFramework.dll" /r:"$wpf\PresentationCore.dll" /r:"$wpf\WindowsBase.dll" `
     /r:"$fw\System.Xaml.dll" /r:System.dll /r:System.Core.dll /r:System.Windows.Forms.dll `
+    /resource:"$PSScriptRoot\src\web\client.html",client.html `
     (Get-ChildItem "$PSScriptRoot\src\*.cs").FullName
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 Write-Host "Built $out\VideoSync.exe"

@@ -15,6 +15,14 @@ RUN
   The order doesn't matter. Clients find the host by themselves and jump
   into sync, even if they start late or the host is restarted.
 
+PHONES AND TABLETS (Android, iPhone - no app needed)
+  1. Connect the phone to the same Wi-Fi as the host.
+  2. In Chrome, open the "Phones & tablets" address shown on the host's
+     screen, e.g.  http://192.168.1.20:47802   (press I on the host to see it)
+  3. Tap "Tap to start". The video streams from the host and plays in sync.
+  * Keep the phone's screen on; switching apps pauses it until you return.
+  * Guest Wi-Fi networks often block phones from reaching the PC.
+
 THE HOST'S ADDRESS (only needed if clients don't connect on their own)
   * The host shows its address in big letters in the top-left corner of
     its screen (while no screens are connected, and for 20 s after start).

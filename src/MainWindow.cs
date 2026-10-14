@@ -30,6 +30,8 @@ namespace VideoSync
 
         Role role = Role.None;
         SyncServer server;
+        WebServer web;
+        string WebUrl { get { return "http://" + hostAddress + ":" + WebServer.Port; } }
         SyncClient client;
         HostDiscovery discovery;
         readonly List<string> discovered = new List<string>();
@@ -334,6 +336,19 @@ namespace VideoSync
                     hostAddrText.ToolTip = addrs.Count > 1 ? "All addresses: " + string.Join(", ", addrs.ToArray()) : null;
                     WriteHostAddressFile();
                     ShowOverlay("Open a video to start.\n\nClients on the network will find this PC automatically.\nThis PC's address: " + hostAddress);
+                    web = new WebServer();
+                    web.CurrentState = () => state;
+                    try
+                    {
+                        web.Start();
+                        hostAddrText.ToolTip = "Phones and tablets: open " + WebUrl + " in a browser" +
+                            (addrs.Count > 1 ? "\nAll addresses: " + string.Join(", ", addrs.ToArray()) : "");
+                    }
+                    catch (Exception ex)
+                    {
+                        web = null;
+                        Log.Write("Web server unavailable on port " + WebServer.Port + ": " + ex.Message);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -369,6 +384,7 @@ namespace VideoSync
         void StopNetwork()
         {
             if (server != null) { server.Stop(); server = null; }
+            if (web != null) { web.Stop(); web = null; }
             if (client != null) { client.Stop(); client = null; }
             if (discovery != null) { discovery.Stop(); discovery = null; }
         }
@@ -1031,6 +1047,7 @@ namespace VideoSync
         {
             ApplyState(s);
             if (server != null) server.Broadcast(s.Serialize());
+            if (web != null) web.Broadcast(s);
         }
 
         bool HasVideo { get { return role == Role.Host && state != null && !string.IsNullOrEmpty(state.FileName); } }
@@ -1144,25 +1161,32 @@ namespace VideoSync
             if (role == Role.Host)
             {
                 var clients = server == null ? new ClientInfo[0] : server.Snapshot();
-                statusText.Text = string.Format("Hosting on port {0}  |  {1} client(s)  |  {2}  {3}  {4}",
-                    Proto.TcpPort, clients.Length, syncStatus, drift, fileWarning);
+                var browsers = web == null ? new WebClientInfo[0] : web.Snapshot();
+                int screens = clients.Length + browsers.Length;
+                statusText.Text = string.Format("Hosting on port {0}  |  {1} PC(s), {2} browser(s)  |  {3}  {4}  {5}",
+                    Proto.TcpPort, clients.Length, browsers.Length, syncStatus, drift, fileWarning);
                 if (uiTicks % 4 == 0)
                 {
                     clientList.Items.Clear();
                     foreach (var c in clients)
                         clientList.Items.Add(string.Format("{0,-14} {1,6:+0;-0;0} ms  {2}", Trim(c.Name, 14), c.DriftMs, c.Status) +
                                              (c.Wallpaper != "" ? "\n" + new string(' ', 15) + c.Wallpaper : ""));
-                    if (clients.Length == 0) clientList.Items.Add("(none yet)");
+                    foreach (var b in browsers)
+                        clientList.Items.Add(string.Format("{0,-14} {1,6:+0;-0;0} ms  {2}\n{3}(browser {4})",
+                            Trim(b.Name, 14), b.DriftMs, b.Status, new string(' ', 15), b.Address));
+                    if (screens == 0) clientList.Items.Add("(none yet)");
                 }
                 // Show the address while no screens are connected, for 20 s after start, or when pinned with I.
-                bool showInfo = infoPinned || clients.Length == 0 || Clock.NowMs < hostStartedAt + 20000;
-                infoText.Text = "Host address:  " + hostAddress + "\n" + clients.Length + " screen(s) connected" +
-                                (infoPinned ? "   (press I to hide)" : "");
+                bool showInfo = infoPinned || screens == 0 || Clock.NowMs < hostStartedAt + 20000;
+                infoText.Text = "Host address:  " + hostAddress +
+                                (web != null ? "\nPhones & tablets:  " + WebUrl : "") +
+                                "\n" + screens + " screen(s) connected" + (infoPinned ? "   (press I to hide)" : "");
                 infoBadge.Visibility = showInfo && hostAddress != "" ? Visibility.Visible : Visibility.Collapsed;
-                if (uiTicks % 40 == 0 && clients.Length > 0)
+                if (uiTicks % 40 == 0 && screens > 0)
                 {
                     var parts = new List<string>();
                     foreach (var c in clients) parts.Add(string.Format("{0}: {1:+0;-0;0} ms {2}", c.Name, c.DriftMs, c.Status));
+                    foreach (var b in browsers) parts.Add(string.Format("{0} [browser]: {1:+0;-0;0} ms {2}", b.Name, b.DriftMs, b.Status));
                     Log.Write("Host " + syncStatus + " " + drift + " | " + string.Join(" | ", parts.ToArray()));
                 }
             }

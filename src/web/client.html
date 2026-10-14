@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>VideoSync</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: hidden;
+               font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+             justify-content: center; gap: 20px; padding: 24px; box-sizing: border-box;
+             text-align: center; background: rgba(0,0,0,.72); }
+  #overlay.hidden { display: none; }
+  h1 { margin: 0; font-size: 28px; font-weight: 600; }
+  #msg { font-size: 17px; line-height: 1.45; max-width: 32em; color: #ddd; }
+  #go { font-size: 22px; font-weight: 600; padding: 16px 40px; border: 0; border-radius: 14px;
+        background: #fff; color: #000; }
+  #go:disabled { opacity: .4; }
+  label { font-size: 15px; color: #bbb; display: flex; gap: 8px; align-items: center; }
+  #hud { position: fixed; left: 10px; bottom: 10px; padding: 6px 10px; border-radius: 8px;
+         background: rgba(0,0,0,.6); font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+         color: #ccc; display: none; white-space: pre; }
+  #sound { position: fixed; right: 12px; top: 12px; font-size: 16px; padding: 10px 16px;
+           border: 0; border-radius: 10px; background: rgba(255,255,255,.9); color: #000; display: none; }
+</style>
+</head>
+<body>
+<video id="v" playsinline preload="auto"></video>
+<div id="overlay">
+  <h1>VideoSync</h1>
+  <div id="msg">Connecting to the host…</div>
+  <button id="go" disabled>Tap to start</button>
+  <label><input type="checkbox" id="startMuted"> Start muted</label>
+</div>
+<button id="sound">Tap for sound</button>
+<div id="hud"></div>
+<script>
+(function () {
+  "use strict";
+  var v = document.getElementById("v"), overlay = document.getElementById("overlay"),
+      msg = document.getElementById("msg"), go = document.getElementById("go"),
+      hud = document.getElementById("hud"), soundBtn = document.getElementById("sound"),
+      startMuted = document.getElementById("startMuted");
+
+  // ---- identity (shown in the host's "Connected screens" list) --------------------------------
+  function store(k, val) { try { if (val === undefined) return localStorage.getItem(k); localStorage.setItem(k, val); } catch (e) { return null; } }
+  var id = store("vs-id");
+  if (!id) { id = Math.random().toString(36).slice(2, 8); store("vs-id", id); }
+  var params = new URLSearchParams(location.search);
+  var name = params.get("name") || (function () {
+    var ua = navigator.userAgent, m = ua.match(/Android[^;)]*;\s*([^;)]+?)(?:\sBuild|\))/), dev;
+    if (m && m[1].trim() !== "K") dev = m[1].trim();          // modern Chrome hides the model as "K"
+    else if (/Android/.test(ua)) dev = "Android";
+    else if (/iPhone|iPad/.test(ua)) dev = ua.match(/iPhone|iPad/)[0];
+    else dev = "Browser";
+    return dev + " " + id.slice(0, 4);
+  })();
+  startMuted.checked = store("vs-muted") === "1";
+
+  // ---- clock sync: NTP-style against the host, keeping the lowest-latency sample -------------
+  var samples = [], offset = 0, rtt = 0, haveClock = false, pings = 0;
+  function now() { return performance.now(); }
+  function hostNow() { return now() + offset; }
+  var lastDrift = 0, syncStatus = "connecting";
+
+  function ping() {
+    var t0 = now();
+    var q = "/time?id=" + encodeURIComponent(id) + "&name=" + encodeURIComponent(name) +
+            "&drift=" + lastDrift.toFixed(1) + "&status=" + encodeURIComponent(started ? syncStatus : "waiting for tap");
+    fetch(q, { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
+      var t3 = now();
+      samples.push([t3 - t0, j.host - (t0 + t3) / 2]);
+      if (samples.length > 20) samples.shift();
+      var best = samples[0];
+      samples.forEach(function (s) { if (s[0] < best[0]) best = s; });
+      rtt = best[0]; offset = best[1]; haveClock = true;
+      setTimeout(ping, ++pings < 10 ? 100 : 1000);
+    }).catch(function () { setTimeout(ping, 2000); });
+  }
+
+  // ---- playback state pushed by the host --------------------------------------------------------
+  var state = null, connected = false, currentVideo = null, started = false;
+  function connect() {
+    var es = new EventSource("/events");
+    es.onopen = function () { connected = true; showMessage(); };
+    es.onerror = function () { connected = false; showMessage(); };   // EventSource reconnects by itself
+    es.onmessage = function (e) {
+      state = JSON.parse(e.data);
+      if (state.video !== currentVideo) {
+        currentVideo = state.video;
+        if (currentVideo) { v.src = currentVideo; v.load(); } else { v.removeAttribute("src"); v.load(); }
+      }
+      samplesD = []; settleUntil = 0;
+      showMessage();
+    };
+  }
+
+  function showMessage() {
+    if (started) return;
+    if (!connected) { msg.textContent = "Connecting to the host…"; go.disabled = true; return; }
+    go.disabled = false;
+    msg.textContent = state && state.video
+      ? "Ready to play " + state.name + " in sync with the other screens."
+      : "Connected. The host hasn't opened a video yet. You can tap Start now.";
+  }
+
+  // ---- start (a tap is required by the browser before video with sound may play) ---------------
+  go.addEventListener("click", function () {
+    started = true;
+    store("vs-muted", startMuted.checked ? "1" : "0");
+    v.muted = startMuted.checked;
+    overlay.classList.add("hidden");
+    var el = document.documentElement;
+    try { (el.requestFullscreen || el.webkitRequestFullscreen).call(el).catch(function () {}); } catch (e) {}
+    try { screen.orientation.lock("landscape").catch(function () {}); } catch (e) {}
+    requestWakeLock();
+    // Prime playback inside the tap so later programmatic play() calls are allowed.
+    if (v.src) v.play().then(function () { if (!state || !state.playing) v.pause(); }).catch(function () {});
+  });
+  soundBtn.addEventListener("click", function () { v.muted = false; soundBtn.style.display = "none"; });
+  v.addEventListener("click", function () { hud.style.display = hud.style.display === "block" ? "none" : "block"; });
+
+  var wakeLock = null;
+  function requestWakeLock() {
+    // Only available on HTTPS pages; on a plain-HTTP LAN page Chrome still keeps the screen on while video plays.
+    if (navigator.wakeLock && window.isSecureContext)
+      navigator.wakeLock.request("screen").then(function (l) { wakeLock = l; }).catch(function () {});
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible" && started) { requestWakeLock(); samplesD = []; }
+  });
+
+  function play() {
+    var p = v.play();
+    if (p && p.catch) p.catch(function (err) {
+      if (err && err.name === "NotAllowedError" && !v.muted) {
+        v.muted = true; soundBtn.style.display = "block";   // allowed muted; offer sound on a tap
+        v.play().catch(function () {});
+      }
+    });
+  }
+
+  // ---- sync engine --------------------------------------------------------------------------------
+  // Browsers change playback speed smoothly (unlike WPF), so small drift is corrected by running a
+  // few percent fast/slow; large drift by seeking slightly ahead (learned seek cost), then easing in.
+  var samplesD = [], settleUntil = 0, startTimer = null;
+  var startLatency = 60, seekAhead = 150, learn = null;
+  function setRate(r) { if (Math.abs(v.playbackRate - r) > 0.004) v.playbackRate = r; }
+  function seek(ms) { v.currentTime = Math.max(0, ms) / 1000; samplesD = []; }
+  function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+
+  function tick() {
+    if (!started || !state || !haveClock || !currentVideo || v.readyState < 1) return;
+    var hn = hostNow(), pos = v.currentTime * 1000;
+    var dur = isFinite(v.duration) ? v.duration * 1000 : 0;
+
+    if (!state.playing) {
+      if (!v.paused) v.pause();
+      setRate(1);
+      if (Math.abs(pos - state.pos) > 40 && !v.seeking) seek(state.pos);
+      lastDrift = 0; syncStatus = "paused";
+      return;
+    }
+    if (hn < state.ref - startLatency) {          // scheduled start: park on the frame, start on time
+      if (!v.paused) v.pause();
+      setRate(1);
+      if (Math.abs(pos - state.pos) > 40 && !v.seeking) seek(state.pos);
+      clearTimeout(startTimer);
+      startTimer = setTimeout(tick, Math.max(0, state.ref - startLatency - hn));
+      syncStatus = "starting";
+      return;
+    }
+    var expected = state.pos + Math.max(0, hn - state.ref);
+    if (dur && expected >= dur - 100) { syncStatus = "ended"; return; }
+
+    if (v.paused) {
+      if (Math.abs(pos - expected) > 150) { seek(expected + seekAhead); learn = "seek"; }
+      else learn = "start";
+      play();
+      settleUntil = now() + 600;
+      syncStatus = "playing";
+      return;
+    }
+    if (v.seeking || v.readyState < 3 || now() < settleUntil) return;
+
+    samplesD.push(pos - expected);
+    if (samplesD.length > 5) samplesD.shift();
+    if (samplesD.length < 5) return;
+    var drift = samplesD.slice().sort(function (a, b) { return a - b; })[2];
+    lastDrift = drift;
+
+    if (learn === "seek" && Math.abs(drift) < 1500) seekAhead = clamp(seekAhead - drift * 0.7, 0, 2000);
+    if (learn === "start" && Math.abs(drift) < 300) startLatency = clamp(startLatency - drift * 0.5, 0, 400);
+    learn = null;
+
+    if (Math.abs(drift) > 1000) {
+      setRate(1);
+      seek(expected + seekAhead);
+      learn = "seek";
+      settleUntil = now() + 600;
+      syncStatus = "resyncing";
+    } else if (Math.abs(drift) > 15) {
+      setRate(1 - clamp(drift / 1500, -0.1, 0.1));
+      syncStatus = "adjusting";
+    } else {
+      setRate(1);
+      syncStatus = "in sync";
+    }
+  }
+
+  v.addEventListener("error", function () {
+    if (!currentVideo) return;
+    overlay.classList.remove("hidden"); started = false;
+    msg.textContent = "This browser can't play " + (state ? state.name : "the video") +
+      ". MP4 with H.264 video works on all phones.";
+    go.disabled = false;
+  });
+
+  setInterval(function () {
+    tick();
+    if (hud.style.display === "block")
+      hud.textContent = name + "  " + syncStatus + "\ndrift " + lastDrift.toFixed(0) + " ms   rate " +
+        v.playbackRate.toFixed(3) + "\nclock offset " + offset.toFixed(1) + " ms   rtt " + rtt.toFixed(1) + " ms" +
+        (connected ? "" : "\nhost connection lost: retrying");
+  }, 100);
+
+  connect();
+  ping();
+})();
+</script>
+</body>
+</html>

@@ -45,6 +45,30 @@ Windows may warn that the exe is unrecognized because it isn't code-signed: clic
 The first time you run it, Windows Firewall asks for network access. Allow it on **Private**
 networks.
 
+### Phones and tablets (Android, iPhone, any browser)
+
+Nothing needs installing on the phone:
+1. Connect the phone to the same Wi-Fi as the host.
+2. Open the address shown on the host's screen in Chrome (or any browser), for example
+   `http://192.168.1.20:47802`.
+3. Tap **Tap to start**. The video goes fullscreen and plays in sync.
+
+How it works:
+- **Streaming:** the host streams the video to the browser, so nothing needs copying to the phone.
+  A typical 1080p MP4 needs about 10–20 Mbit/s per phone, which suits a handful of phones on good
+  Wi-Fi.
+- **One tap required:** browsers block video with sound until someone touches the page. If sound
+  is still blocked, the video plays muted and shows a **Tap for sound** button.
+- **Sync:** the browser follows the same timeline, with small drift corrected by speeding up or
+  slowing down by a few percent. Tap the video to show sync details.
+- **Connected screens:** phones appear in the host's list, named after the phone model. Add
+  `?name=Lobby` to the address to give a phone a custom name.
+- **Limits:** turning the phone's screen off or switching apps pauses the video until you come
+  back. Then it rejoins in sync. Desktop backgrounds can't be synced to a browser.
+- **Can't connect?** Phones can't connect on guest Wi-Fi networks that isolate devices from each
+  other. Windows Firewall must allow VideoSync on the host. The same allow rule covers the phone
+  port, 47802.
+
 ### Running unattended
 
 - **Start with Windows:** this checkbox adds a small script to the user's Startup folder that
@@ -215,5 +239,8 @@ Repository layout:
 - `src\Network.cs`: host server, discovery beacons, client connection and clock sync
 - `src\Protocol.cs`: shared clock, playback state, message framing, settings and log
 - `src\Wallpaper.cs`: reading, sending and applying the desktop background
+- `src\WebServer.cs`: small HTTP server on the host for browsers: page, event stream, clock and
+  video streaming
+- `src\web\client.html`: the browser player, embedded into the exe at build time
 - `share\`: launcher scripts and quick guide included in the zip
 - `samples\sync-test.mp4`: test clip with an on-screen timer and frame counter
