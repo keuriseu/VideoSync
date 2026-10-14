@@ -45,6 +45,18 @@ Windows may warn that the exe is unrecognized because it isn't code-signed: clic
 The first time you run it, Windows Firewall asks for network access. Allow it on **Private**
 networks.
 
+### Running unattended
+
+- **Start with Windows:** this checkbox adds a small script to the user's Startup folder that
+  relaunches VideoSync with the same options after sign-in, for example after an overnight Windows
+  Update restart. The PC must sign in automatically after a restart for this to help.
+- **Keep awake:** while a video plays, VideoSync stops Windows from turning off the display or
+  sleeping.
+- **Self-healing:** if a player freezes, its video goes black, or it can't be brought back in sync,
+  VideoSync reloads the video and resyncs it within a few seconds. It also reloads after the PC
+  wakes, is unlocked, or changes display settings, because these are known to blank WPF's video
+  player.
+
 ### Syncing the desktop background
 
 Click **Sync desktop background** on the host. Every connected client receives the host's current
@@ -171,8 +183,15 @@ netsh advfirewall firewall add rule name="VideoSync" dir=in action=allow program
 ```
 
 - **Logs:** written to `%APPDATA%\VideoSync\videosync.log`. While playing, the host logs every
-  screen's drift every 10 s. Set the environment variable `VIDEOSYNC_DEBUG=1` for a per-tick sync
-  trace.
+  screen's drift every 10 s. If that folder can't be written, the log goes to `videosync.log` next
+  to the exe instead.
+- **Testing switches:** these environment variables are for development:
+
+  | Variable | Effect |
+  |---|---|
+  | `VIDEOSYNC_DEBUG=1` | per-tick sync trace in the log |
+  | `VIDEOSYNC_PORT=<n>` | use ports n and n+1 instead of 47800/47801, so a test doesn't disturb a running setup |
+  | `VIDEOSYNC_FAULT=dead@15,ahead@40` | inject a frozen player, or a 30 s jump ahead, at the given seconds to exercise self-healing |
 
 ## Building
 

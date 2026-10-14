@@ -21,6 +21,8 @@ namespace VideoSync
         const double BehindTolMs = 40;    // behind by more than this: seek ahead, then hold
         const double SettleMs = 400;      // ignore drift readings right after a start or seek
         const int DriftWindow = 5;        // median filter length (readings are 100 ms apart)
+        const double MaxHoldMs = 1500;    // ahead by more than this: jump back instead of holding the frame
+        const double StallMs = 3000;      // playing but position frozen this long: reload the video
         const double SeekStepMs = 5000;
 
         readonly StartupOptions opts;
@@ -43,6 +45,9 @@ namespace VideoSync
         double durationMs, settleUntil, lastDrift;
         readonly List<double> driftSamples = new List<double>();
         bool parked, parkSeeked;          // paused, waiting to start at host time parkAt
+        double lastPosSeen = -1, lastPosMovedAt; // stall watchdog
+        int catchUpStreak;                // consecutive catch-ups without reaching sync
+        const int MaxCatchUps = 4;
         double parkAt;
         double holdLatencyMs, seekStartLatencyMs, catchUpAheadMs; // learned per PC, see Learn()
         enum LearnKind { None, HoldStart, SeekStart, CatchUp }
@@ -57,7 +62,7 @@ namespace VideoSync
         ComboBox hostBox;
         TextBlock folderText, overlay, statusText, timeText, hostAddrText, infoText;
         Border infoBadge;
-        CheckBox allowWallpaperBox;
+        CheckBox allowWallpaperBox, autostartBox;
         string notice = "";
         double noticeUntil;
         bool infoPinned;
@@ -93,6 +98,7 @@ namespace VideoSync
 
             Loaded += OnLoaded;
             Closing += (s, e) => StopNetwork();
+            HookSystemEvents();
             PreviewKeyDown += OnKey;
         }
 
@@ -135,7 +141,10 @@ namespace VideoSync
             volSlider.ValueChanged += (s, e) => { media.Volume = volSlider.Value; settings.Set("volume", volSlider.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)); };
             muteBox = new CheckBox { Content = "Mute", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
             muteBox.Click += (s, e) => media.IsMuted = muteBox.IsChecked == true;
-            top.Children.Add(Group(Label("Volume"), volSlider, muteBox, Btn("Fullscreen (F11)", (s, e) => ToggleFullscreen())));
+            autostartBox = new CheckBox { Content = "Start with Windows", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0),
+                ToolTip = "Relaunch VideoSync the same way after sign-in, e.g. after an overnight Windows Update restart." };
+            autostartBox.Click += (s, e) => SetAutostart(autostartBox.IsChecked == true);
+            top.Children.Add(Group(Label("Volume"), volSlider, muteBox, Btn("Fullscreen (F11)", (s, e) => ToggleFullscreen()), autostartBox));
             topBar = top;
             DockPanel.SetDock(top, Dock.Top);
             root.Children.Add(top);
@@ -272,6 +281,8 @@ namespace VideoSync
             hostBox.Text = opts.HostAddress ?? ReadHostAddressFile() ?? settings.Get("host", "");
             if (opts.NoWallpaper) settings.Set("allowWallpaper", "0");
             allowWallpaperBox.IsChecked = settings.Get("allowWallpaper", "1") == "1";
+            autostartBox.IsChecked = File.Exists(StartupScriptPath);
+            Log.Write("Data folder: " + Log.Dir + (Settings.LoadError != null ? "  (settings could not be read: " + Settings.LoadError + ")" : ""));
 
             syncTimer.Start();
             uiTimer.Start();
@@ -562,6 +573,7 @@ namespace VideoSync
         void ApplyState(PlayState s)
         {
             state = s;
+            catchUpStreak = 0; // a new timeline (seek, loop, play) legitimately needs a fresh catch-up
             loopBox.IsChecked = s.Loop;
             var path = ResolvePath(s);
             if (path == null)
@@ -606,6 +618,22 @@ namespace VideoSync
             media.Source = new Uri(path);
             media.Pause(); // opens the media and shows the first frame
             Log.Write("Loading " + path);
+        }
+
+        /// <summary>Re-open the current video from scratch and resync; fixes a stuck or blanked player.</summary>
+        void ReloadMedia(string reason)
+        {
+            var path = loadedPath;
+            if (path == null || !mediaReady) return;
+            Log.Write("Reloading video: " + reason);
+            catchUpStreak = 0;
+            testDeadPlayer = false;
+            startTimer.Stop();
+            parked = false;
+            driftSamples.Clear();
+            lastPosMovedAt = Clock.NowMs;
+            loadedPath = null;
+            LoadMedia(path); // OnMediaOpened primes the player and resyncs it to the timeline
         }
 
         void UnloadMedia()
@@ -748,6 +776,14 @@ namespace VideoSync
             if (Clock.NowMs < settleUntil) return;
 
             double pos = media.Position.TotalMilliseconds;
+            // Watchdog: the player should be moving. If its position hasn't changed for a while it has
+            // stalled (e.g. stuck at end-of-stream or lost its video surface): reload and resync.
+            if (Math.Abs(pos - lastPosSeen) > 1) { lastPosSeen = pos; lastPosMovedAt = Clock.NowMs; }
+            else if (Clock.NowMs - lastPosMovedAt > StallMs)
+            {
+                ReloadMedia(string.Format("player stalled at {0:0} ms for {1:0.0} s", pos, (Clock.NowMs - lastPosMovedAt) / 1000));
+                return;
+            }
             if (pos == 0 && expected > 1000) return; // MediaElement briefly reports 0 right after Play()
             driftSamples.Add(pos - expected);
             if (driftSamples.Count > DriftWindow) driftSamples.RemoveAt(0);
@@ -761,7 +797,12 @@ namespace VideoSync
 
             Learn(drift);
 
-            if (drift > AheadTolMs)
+            if (drift > MaxHoldMs)
+            {
+                // Far ahead (e.g. a seek was dropped): jump back rather than freeze for that long.
+                CatchUp(expected);
+            }
+            else if (drift > AheadTolMs)
             {
                 // Ahead: hold this frame until the timeline reaches it.
                 media.Pause();
@@ -774,7 +815,7 @@ namespace VideoSync
                 syncStatus = "in sync";
             }
             else if (drift < -BehindTolMs) CatchUp(expected);
-            else syncStatus = "in sync";
+            else { syncStatus = "in sync"; catchUpStreak = 0; }
         }
 
         /// <summary>Learn this PC's latencies from the first settled reading after a start or catch-up.</summary>
@@ -808,6 +849,13 @@ namespace VideoSync
         /// <summary>Behind (or far off) while playing: seek past the timeline; the hold logic trims the excess.</summary>
         void CatchUp(double expected)
         {
+            // A healthy player is back in sync after one or two catch-ups. If they keep failing, the
+            // player itself is broken (frozen, dead video surface): reload it instead of retrying forever.
+            if (++catchUpStreak > MaxCatchUps)
+            {
+                ReloadMedia("could not resync after " + MaxCatchUps + " attempts");
+                return;
+            }
             Seek(expected + catchUpAheadMs);
             settleUntil = Clock.NowMs + SettleMs;
             learn = LearnKind.CatchUp;
@@ -835,12 +883,16 @@ namespace VideoSync
             startTimer.Start();
         }
 
+        bool testDeadPlayer; // see ScheduleTestFaults
+
         void StartPlayback()
         {
-            media.Play();
+            if (!testDeadPlayer) media.Play();
             isPlaying = true;
             driftSamples.Clear();
             settleUntil = Clock.NowMs + SettleMs;
+            lastPosSeen = -1;
+            lastPosMovedAt = Clock.NowMs;
             learn = !parked ? LearnKind.None : parkSeeked ? LearnKind.SeekStart : LearnKind.HoldStart;
             parked = false;
             parkSeeked = false;
@@ -852,8 +904,118 @@ namespace VideoSync
         void Seek(double ms)
         {
             if (Debug) Log.Write(string.Format("dbg {0} seek to {1:0} (was {2:0})", role, ms, media.Position.TotalMilliseconds));
-            media.Position = TimeSpan.FromMilliseconds(Math.Max(0, ms));
+            if (!testDeadPlayer) media.Position = TimeSpan.FromMilliseconds(Math.Max(0, ms));
             driftSamples.Clear();
+        }
+
+        // ---------------------------------------------------------------- robustness: power, display, autostart
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        static extern uint SetThreadExecutionState(uint flags);
+        const uint ES_CONTINUOUS = 0x80000000, ES_SYSTEM_REQUIRED = 0x1, ES_DISPLAY_REQUIRED = 0x2;
+        bool keepingAwake;
+
+        /// <summary>While a video is playing, stop Windows from turning off the display or sleeping.</summary>
+        void UpdateKeepAwake()
+        {
+            bool want = state != null && state.Playing && mediaReady;
+            if (want == keepingAwake) return;
+            keepingAwake = want;
+            SetThreadExecutionState(want ? ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED : ES_CONTINUOUS);
+        }
+
+        /// <summary>
+        /// WPF's video player can go black after the PC wakes, the session is unlocked, or the display
+        /// configuration changes (its video surface is lost). Reload the video shortly after any of these.
+        /// </summary>
+        /// <summary>
+        /// Testing aid: VIDEOSYNC_FAULT="stall@15,ahead@40" freezes the player behind the engine's back
+        /// at 15 s, and jumps it 30 s ahead at 40 s (seconds after start), to exercise self-healing.
+        /// </summary>
+        void ScheduleTestFaults()
+        {
+            var spec = Environment.GetEnvironmentVariable("VIDEOSYNC_FAULT");
+            if (string.IsNullOrEmpty(spec)) return;
+            foreach (var part in spec.Split(','))
+            {
+                var kv = part.Split('@');
+                double at;
+                if (kv.Length != 2 || !double.TryParse(kv[1], out at)) continue;
+                string kind = kv[0];
+                var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(at) };
+                t.Tick += (s, e) =>
+                {
+                    t.Stop();
+                    Log.Write("TEST FAULT: " + kind);
+                    if (kind == "stall") media.Pause(); // engine still believes it's playing
+                    else if (kind == "dead") { media.Pause(); testDeadPlayer = true; } // ignores Play/seek until reloaded
+                    else if (kind == "ahead") media.Position = media.Position + TimeSpan.FromSeconds(30);
+                };
+                t.Start();
+            }
+        }
+
+        void HookSystemEvents()
+        {
+            ScheduleTestFaults();
+            Microsoft.Win32.SystemEvents.PowerModeChanged += (s, e) =>
+            {
+                if (e.Mode == Microsoft.Win32.PowerModes.Resume) ScheduleReload("PC resumed from sleep");
+            };
+            Microsoft.Win32.SystemEvents.SessionSwitch += (s, e) =>
+            {
+                if (e.Reason == Microsoft.Win32.SessionSwitchReason.SessionUnlock ||
+                    e.Reason == Microsoft.Win32.SessionSwitchReason.ConsoleConnect ||
+                    e.Reason == Microsoft.Win32.SessionSwitchReason.RemoteConnect)
+                    ScheduleReload("session " + e.Reason);
+            };
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (s, e) => ScheduleReload("display settings changed");
+            Closed += (s, e) => SetThreadExecutionState(ES_CONTINUOUS);
+        }
+
+        DispatcherTimer reloadTimer;
+
+        void ScheduleReload(string reason)
+        {
+            // SystemEvents fire on their own thread; coalesce bursts (e.g. several display changes) into one reload.
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                Log.Write("System event: " + reason);
+                if (reloadTimer != null) reloadTimer.Stop();
+                reloadTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                reloadTimer.Tick += (a, b) => { reloadTimer.Stop(); ReloadMedia(reason); };
+                reloadTimer.Start();
+            }));
+        }
+
+        static string StartupScriptPath
+        {
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "VideoSync.cmd"); }
+        }
+
+        /// <summary>Adds/removes a script in the user's Startup folder that relaunches VideoSync exactly as it was started.</summary>
+        void SetAutostart(bool on)
+        {
+            try
+            {
+                if (!on) { if (File.Exists(StartupScriptPath)) File.Delete(StartupScriptPath); Log.Write("Autostart off"); return; }
+                var args = Environment.GetCommandLineArgs();
+                var sb = new System.Text.StringBuilder();
+                for (int i = 1; i < args.Length; i++) sb.Append(" \"").Append(args[i]).Append('"');
+                if (args.Length <= 1) sb.Append(role == Role.Host ? " --host" : role == Role.Client ? " --client" : "");
+                string exe = System.Reflection.Assembly.GetExecutingAssembly().Location;
+                File.WriteAllText(StartupScriptPath,
+                    "@echo off\r\nrem Created by VideoSync (\"Start with Windows\"). Delete this file to stop autostart.\r\n" +
+                    "rem Waits a little so the network is up after sign-in.\r\n" +
+                    "timeout /t 15 /nobreak >nul\r\n" +
+                    "cd /d \"" + Path.GetDirectoryName(exe) + "\"\r\n" +
+                    "start \"\" \"" + exe + "\"" + sb + "\r\n");
+                Log.Write("Autostart on: " + StartupScriptPath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Could not change autostart: " + ex.Message, "VideoSync", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         // ---------------------------------------------------------------- host controls
@@ -972,6 +1134,7 @@ namespace VideoSync
         void UpdateUi()
         {
             uiTicks++;
+            UpdateKeepAwake();
             double pos = state == null ? 0 : Math.Min(state.ExpectedPos(HostNow()), durationMs > 0 ? durationMs : double.MaxValue);
             timeText.Text = Fmt(pos) + " / " + Fmt(durationMs);
             if (!seeking) seekSlider.Value = Math.Min(pos, seekSlider.Maximum);

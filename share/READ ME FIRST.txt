@@ -39,7 +39,8 @@ DESKTOP BACKGROUND
   * The host's background must be a picture (not a solid color).
     Very large pictures are sent as high-quality JPEG.
 
-FIRST TIME ON EACH PC  * "Windows protected your PC"  ->  click "More info", then "Run anyway".
+FIRST TIME ON EACH PC
+  * "Windows protected your PC"  ->  click "More info", then "Run anyway".
   * Firewall prompt              ->  click "Allow" (Private networks).
   * If nothing happens after copying from a network/download: right-click
     VideoSync.exe -> Properties -> tick "Unblock" -> OK.
@@ -53,10 +54,20 @@ CONTROLS (keyboard, on the host)
                screens;  F11 or double-click the video to go fullscreen again
   Alt+F4       quit
 
+RUNNING UNATTENDED / OVERNIGHT
+  * Tick "Start with Windows" (press Esc to see it) on each PC so VideoSync
+    comes back by itself after a restart, e.g. an overnight Windows Update.
+    Windows must sign in automatically for this to work after a restart.
+  * While a video plays, VideoSync keeps the screen on and the PC awake.
+  * If a screen's video player freezes or goes black, VideoSync reloads it
+    and puts it back in sync within a few seconds.
+
 TROUBLESHOOTING
   * Client says "Searching for a host": copy host-address.txt from the host's
     folder into the client's folder and start the client again (see above).
   * "Video not found on this PC": the video file name must be the same on
     every PC and sit in this folder.
+  * Something went wrong? Send the log: %APPDATA%\VideoSync\videosync.log
+    (or videosync.log next to VideoSync.exe).
   * "Cannot play this file": convert the video to MP4 (H.264). Windows "N"
     editions also need the free Media Feature Pack (Settings > Optional features).

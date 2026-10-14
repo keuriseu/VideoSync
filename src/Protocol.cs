@@ -18,8 +18,16 @@ namespace VideoSync
 
     static class Proto
     {
-        public const int TcpPort = 47800;   // host <-> client control channel
-        public const int UdpPort = 47801;   // host discovery beacons
+        // host <-> client control channel, and host discovery beacons.
+        // VIDEOSYNC_PORT overrides the base port (e.g. to test without disturbing a running installation).
+        public static readonly int TcpPort = BasePort();
+        public static readonly int UdpPort = TcpPort + 1;
+
+        static int BasePort()
+        {
+            int p;
+            return int.TryParse(Environment.GetEnvironmentVariable("VIDEOSYNC_PORT"), out p) && p > 0 && p < 65535 ? p : 47800;
+        }
         public const string Magic = "VIDEOSYNC1";
 
         public static string F(double d) { return d.ToString("R", CultureInfo.InvariantCulture); }
@@ -152,18 +160,33 @@ namespace VideoSync
         public static readonly string Dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VideoSync");
 
+        static string lastError;
+
         public static void Write(string msg)
         {
-            try
+            string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  " + msg + Environment.NewLine;
+            lock (lk)
             {
-                lock (lk)
+                try
                 {
                     Directory.CreateDirectory(Dir);
-                    File.AppendAllText(Path.Combine(Dir, "videosync.log"),
-                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  " + msg + Environment.NewLine);
+                    File.AppendAllText(Path.Combine(Dir, "videosync.log"), line);
+                    return;
                 }
+                catch (Exception ex)
+                {
+                    // The normal location can't be written: fall back to a log next to the exe, noting why once.
+                    string err = ex.GetType().Name + ": " + ex.Message;
+                    if (err != lastError)
+                    {
+                        lastError = err;
+                        line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  (cannot write " + Dir + ": " + err + ")" +
+                               Environment.NewLine + line;
+                    }
+                }
+                try { File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "videosync.log"), line); }
+                catch { }
             }
-            catch { }
         }
     }
 
@@ -172,6 +195,8 @@ namespace VideoSync
     {
         readonly Dictionary<string, string> values = new Dictionary<string, string>();
         readonly string path = Path.Combine(Log.Dir, "settings.ini");
+
+        public static string LoadError;
 
         public static Settings Load()
         {
@@ -185,7 +210,7 @@ namespace VideoSync
                         if (i > 0) s.values[line.Substring(0, i)] = line.Substring(i + 1);
                     }
             }
-            catch { }
+            catch (Exception ex) { LoadError = ex.GetType().Name + ": " + ex.Message; }
             return s;
         }
 
