@@ -1,0 +1,62 @@
+VideoSync - play the same video in sync on several Windows PCs
+==============================================================
+
+SETUP (once)
+  1. Put the video you want to show into this folder (MP4 works best).
+     Delete sync-test.mp4 if you don't need it; if there are several
+     videos, the host plays the first one alphabetically.
+  2. Copy this whole folder to every PC (USB stick, network share, ...).
+     All PCs must be on the same network.
+
+RUN
+  On the ONE PC that controls playback:   double-click  Start Host.cmd
+  On EVERY OTHER PC:                      double-click  Start Client.cmd
+
+  The order doesn't matter. Clients find the host by themselves and jump
+  into sync, even if they start late or the host is restarted.
+
+THE HOST'S ADDRESS (only needed if clients don't connect on their own)
+  * The host shows its address in big letters in the top-left corner of
+    its screen (while no screens are connected, and for 20 s after start).
+    Press I on the host to show/hide it at any time.
+  * The host also saves it to a file, host-address.txt, in this folder.
+    Copy that one small file into the folder on each other PC (or copy the
+    whole folder AFTER starting the host once). Clients use it automatically.
+  * Or: on the host press Ctrl+C (or Esc, then "Copy address") to copy the
+    address, and paste it in a message/email to yourself, then type it into
+    the "Host" box on the client (press Esc on the client to see the box).
+  If the saved address ever goes stale (e.g. the host got a new IP), clients
+  switch to the host they can see on the network after a few seconds.
+
+DESKTOP BACKGROUND
+  On the host, press Esc and click "Sync desktop background": every
+  connected screen (and any that connect later) gets the host's current
+  desktop picture, with the same Fill/Fit setting.
+  * Each PC keeps a copy of its own background first. To get it back,
+    press Esc on that PC and click "Restore my wallpaper".
+  * To stop a PC from ever taking the host's background, untick
+    "Allow wallpaper sync" on that PC.
+  * The host's background must be a picture (not a solid color).
+    Very large pictures are sent as high-quality JPEG.
+
+FIRST TIME ON EACH PC  * "Windows protected your PC"  ->  click "More info", then "Run anyway".
+  * Firewall prompt              ->  click "Allow" (Private networks).
+  * If nothing happens after copying from a network/download: right-click
+    VideoSync.exe -> Properties -> tick "Unblock" -> OK.
+
+CONTROLS (keyboard, on the host)
+  Space        play / pause (all screens)
+  Left/Right   jump 5 seconds back / forward
+  I            show / hide the host address
+  Ctrl+C       copy the host address to the clipboard
+  Esc          leave fullscreen to see buttons and the list of connected
+               screens;  F11 or double-click the video to go fullscreen again
+  Alt+F4       quit
+
+TROUBLESHOOTING
+  * Client says "Searching for a host": copy host-address.txt from the host's
+    folder into the client's folder and start the client again (see above).
+  * "Video not found on this PC": the video file name must be the same on
+    every PC and sit in this folder.
+  * "Cannot play this file": convert the video to MP4 (H.264). Windows "N"
+    editions also need the free Media Feature Pack (Settings > Optional features).
