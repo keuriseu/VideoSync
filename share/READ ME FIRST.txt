@@ -22,6 +22,9 @@ PHONES AND TABLETS (Android, iPhone - no app needed)
   3. Tap "Tap to start". The video streams from the host and plays in sync.
   * Keep the phone's screen on; switching apps pauses it until you return.
   * Guest Wi-Fi networks often block phones from reaching the PC.
+  * "This site can't be reached" on a Chromebook/Googlebook or newer Chrome:
+    allow access to devices on your local network when asked, or turn it on
+    in the device's settings (managed devices may need their administrator).
 
 THE HOST'S ADDRESS (only needed if clients don't connect on their own)
   * The host shows its address in big letters in the top-left corner of

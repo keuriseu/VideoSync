@@ -55,6 +55,9 @@
     if (m && m[1].trim() !== "K") dev = m[1].trim();          // modern Chrome hides the model as "K"
     else if (/Android/.test(ua)) dev = "Android";
     else if (/iPhone|iPad/.test(ua)) dev = ua.match(/iPhone|iPad/)[0];
+    else if (/CrOS/.test(ua)) dev = "Chromebook";
+    else if (/Windows/.test(ua)) dev = "Windows browser";
+    else if (/Macintosh/.test(ua)) dev = "Mac";
     else dev = "Browser";
     return dev + " " + id.slice(0, 4);
   })();

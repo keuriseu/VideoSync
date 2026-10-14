@@ -65,9 +65,14 @@ How it works:
   `?name=Lobby` to the address to give a phone a custom name.
 - **Limits:** turning the phone's screen off or switching apps pauses the video until you come
   back. Then it rejoins in sync. Desktop backgrounds can't be synced to a browser.
-- **Can't connect?** Phones can't connect on guest Wi-Fi networks that isolate devices from each
-  other. Windows Firewall must allow VideoSync on the host. The same allow rule covers the phone
-  port, 47802.
+- **Can't connect?**
+  - **Allow local network access:** newer Chrome versions, and ChromeOS on Chromebooks and
+    Googlebooks, block pages from reaching devices on your own network until you allow it. When
+    the browser asks, allow it, or turn on access to local network devices in the device's or
+    Chrome's settings. On managed school or work devices, an administrator may need to allow it.
+  - **Guest Wi-Fi:** phones can't connect on guest networks that isolate devices from each other.
+  - **Firewall:** Windows Firewall must allow VideoSync on the host. The same allow rule covers
+    the phone port, 47802.
 
 ### Running unattended
 
